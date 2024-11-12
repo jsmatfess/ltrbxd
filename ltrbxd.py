@@ -1,9 +1,17 @@
-from collections import defaultdict
 import argparse
+import re
+import requests
+from collections import defaultdict
 
 def get_word_list(dict_file: str) -> set[str]:
     with open(dict_file, "r") as f:
         return set(f.read().lower().split())
+    
+
+def get_sides() -> list[str]:
+    url = "https://www.nytimes.com/puzzles/letter-boxed"
+    response = requests.get(url)
+    return list(re.findall(r'sides":\["([A-Z]{3})","([A-Z]{3})","([A-Z]{3})","([A-Z]{3})"\]', response.text)[0])
 
 
 def is_valid_word(word: str, sides: list[str]) -> bool:
@@ -208,10 +216,18 @@ def solve_letterboxed(sides: list[str], dict_file: str, max_words: int) -> None:
 def main():
     parser = argparse.ArgumentParser(description='Solve NYT Letter Boxed puzzle')
     parser.add_argument('--dict', type=str, required=True, help='Path to dictionary file')
-    parser.add_argument('--sides', type=str, nargs=4, required=True, help='Four sides of the puzzle, each as a string of letters')
+    parser.add_argument('--sides', type=str, nargs=4, help='Four sides of the puzzle, each as a string of 3 letters')
     parser.add_argument('--max-words', type=int, default=2, help='Maximum number of words in solution')
     
     args = parser.parse_args()
+    if not args.sides:
+        args.sides = get_sides()
+    args.sides = [side.lower().strip() for side in args.sides]
+
+    # Validate sides input
+    if not all(len(side) == 3 for side in args.sides):
+        parser.error("Each side must contain exactly 3 letters")
+
     solve_letterboxed(args.sides, args.dict, args.max_words)
 
 if __name__ == "__main__":

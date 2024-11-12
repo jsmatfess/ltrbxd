@@ -7,6 +7,7 @@ This Python script solves arbitrary New York Times Letter Boxed puzzles. As oppo
 - This is not intended to provide a comprehensive list of solutions, but rather a single solution that uses the minimum number of total letters.
 - While unlikely, it is theoretically possible that an optimal solution would contain a word that does not introduce any new letters. To reduce the search space, this script skips those words and therefore could miss an optimal solution.
 - Many Letter Boxed games can be solved using only 2 words, so the default maximum number of words is 2. You can override this by specifying a different number with the `--max-words` flag.
+- If `--sides` is omitted, the script will automatically fetch the current day's sides from the NYT website.
 
 ## Usage
 
