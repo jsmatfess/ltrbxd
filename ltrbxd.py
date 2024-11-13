@@ -1,17 +1,33 @@
 import argparse
 import re
 import requests
-from collections import defaultdict
 
-def get_word_list(dict_file: str) -> set[str]:
-    with open(dict_file, "r") as f:
-        return set(f.read().lower().split())
-    
 
-def get_sides() -> list[str]:
+def get_nyt_sides() -> list[str]:
     url = "https://www.nytimes.com/puzzles/letter-boxed"
     response = requests.get(url)
-    return list(re.findall(r'sides":\["([A-Z]{3})","([A-Z]{3})","([A-Z]{3})","([A-Z]{3})"\]', response.text)[0])
+    return list(
+        re.findall(
+            r'"sides":\["([A-Z]{3})","([A-Z]{3})","([A-Z]{3})","([A-Z]{3})"\]',
+            response.text,
+        )[0]
+    )
+
+
+def dict_file_to_word_list(dict_file: str) -> list[str]:
+    with open(dict_file, "r") as f:
+        return f.read().lower().split()
+
+
+def get_nyt_word_list() -> list[str]:
+    url = "https://www.nytimes.com/puzzles/letter-boxed"
+    response = requests.get(url)
+    return (
+        re.findall(r'"dictionary":\[(["A-Z,]+)', response.text)[0]
+        .replace('"', "")
+        .lower()
+        .split(",")
+    )
 
 
 def is_valid_word(word: str, sides: list[str]) -> bool:
@@ -33,7 +49,7 @@ def is_valid_word(word: str, sides: list[str]) -> bool:
         return False
 
     # Check all letters are from the sides
-    valid_letters = set("".join(sides))
+    valid_letters = list("".join(sides))
     if not all(c in valid_letters for c in word):
         return False
 
@@ -45,7 +61,10 @@ def is_valid_word(word: str, sides: list[str]) -> bool:
 
     return True
 
-def group_words_by_start(valid_words: list[str]) -> dict[str, list[str]]:
+
+def group_words_by_start(
+    sides: list[str], valid_words: list[str]
+) -> dict[str, list[str]]:
     """Group valid words by their starting letter for efficient lookup.
 
     Args:
@@ -55,13 +74,14 @@ def group_words_by_start(valid_words: list[str]) -> dict[str, list[str]]:
         dict[str, list[str]]: Dictionary mapping starting letters to lists of words
             that begin with that letter
     """
-    words_by_start: dict[str, list[str]] = defaultdict(list)
-    for word in valid_words:
-        words_by_start[word[0]].append(word)
-    return words_by_start
+    return {
+        letter: [word for word in valid_words if word[0] == letter]
+        for letter in "".join(sides)
+    }
+
 
 def prepare_valid_words(
-    word_list: set[str], sides: list[str]
+    word_list: list[str], sides: list[str], skip_validation: bool
 ) -> tuple[list[str], dict[str, list[str]]]:
     """Prepare and organize valid words for efficient puzzle solving.
 
@@ -69,7 +89,7 @@ def prepare_valid_words(
     sorts them by length and alphabetically, and groups them by starting letter.
 
     Args:
-        word_list (set[str]): Set of all possible dictionary words
+        word_list (list[str]): List of all possible dictionary words
         sides (list[str]): List of strings representing letters on each side of puzzle
 
     Returns:
@@ -77,14 +97,19 @@ def prepare_valid_words(
             - List of valid words sorted by length, then alphabetically
             - Dictionary mapping starting letters to lists of valid words
     """
-    valid_words = [word for word in word_list if is_valid_word(word, sides)]
+    valid_words = (
+        [word for word in word_list if is_valid_word(word, sides)]
+        if not skip_validation
+        else word_list
+    )
     valid_words.sort(key=lambda x: (len(x), x))
-    words_by_start = group_words_by_start(valid_words)
+    words_by_start = group_words_by_start(sides, valid_words)
     return valid_words, words_by_start
+
 
 def get_candidate_words(
     current_words: list[str],
-    words_by_start: dict[str, list[str]], 
+    words_by_start: dict[str, list[str]],
     valid_words: list[str],
     remaining_letters: set[str],
     best_length: float,
@@ -111,9 +136,10 @@ def get_candidate_words(
     last_letter = current_words[-1][-1] if current_words else None
     word_pool = words_by_start[last_letter] if last_letter else valid_words
     return [
-        w for w in word_pool
-        if any(l in w for l in remaining_letters)
-        and len(w) <= (best_length - current_length)
+        word
+        for word in word_pool
+        if any(letter in word for letter in remaining_letters)
+        and len(word) <= (best_length - current_length)
     ]
 
 
@@ -129,7 +155,12 @@ def calculate_solution_length(words: list[str]) -> int:
     return sum(len(w) for w in words) - len(words) + 1
 
 
-def solve_letterboxed(sides: list[str], dict_file: str, max_words: int) -> None:
+def solve_letterboxed(
+    sides: list[str],
+    valid_words: list[str],
+    words_by_start: dict[str, list[str]],
+    max_words: int,
+) -> None:
     """Find optimal solutions for NYT Letterboxed puzzle.
 
     Uses a recursive depth-first search to find solutions that:
@@ -137,18 +168,17 @@ def solve_letterboxed(sides: list[str], dict_file: str, max_words: int) -> None:
     - Follow puzzle rules for letter placement
     - Use the minimum number of letters possible
     - Use no more than max_words words
-    
+
     Solutions are written to results.txt and printed to console.
 
     Args:
         sides (list[str]): List of strings representing letters on each side of puzzle
-        dict_file (str): Path to dictionary file
+        valid_words (list[str]): List of valid words that can be used in the puzzle
+        words_by_start (dict[str, list[str]]): Dictionary mapping starting letters to lists of valid words
         max_words (int, optional): Maximum number of words allowed in solution. Defaults to 2.
     """
     letter_set = set("".join(sides))
-    word_list = get_word_list(dict_file)
 
-    valid_words, words_by_start = prepare_valid_words(word_list, sides)
     target_length = 12
     best_length = float("inf")
     solution_found = False
@@ -157,20 +187,20 @@ def solve_letterboxed(sides: list[str], dict_file: str, max_words: int) -> None:
         current_words: list[str], remaining_letters: set[str], depth: int = 0
     ) -> None:
         """Recursively search for valid solutions using depth-first search.
-        
+
         Args:
             current_words: List of words in the current partial solution
             remaining_letters: Set of letters that still need to be used
             depth: Current recursion depth (number of words used so far)
         """
         nonlocal solution_found, best_length
-        
+
         # Stop if we found optimal solution or exceeded max words
         if solution_found or depth >= max_words:
             return
 
         current_length = calculate_solution_length(current_words)
-        
+
         # Stop if current solution is longer than best found
         if current_length > best_length:
             return
@@ -189,7 +219,7 @@ def solve_letterboxed(sides: list[str], dict_file: str, max_words: int) -> None:
         for word in candidates:
             # Calculate remaining unused letters after adding this word
             new_remaining = remaining_letters - set(word)
-            
+
             # Check if we found a complete solution using all letters
             if not new_remaining:
                 solution_words = current_words + [word]
@@ -198,14 +228,16 @@ def solve_letterboxed(sides: list[str], dict_file: str, max_words: int) -> None:
                 # If this is a better solution than previous best
                 if solution_length < best_length:
                     best_length = solution_length
-                    solution = f"{' -> '.join(solution_words)} ({solution_length} letters)"
+                    solution = (
+                        f"{' -> '.join(solution_words)} ({solution_length} letters)"
+                    )
                     print(solution)
 
                     # Stop if we found optimal length solution
                     if solution_length == target_length:
                         solution_found = True
                     return
-                    
+
             # Recursively try adding more words to current partial solution
             recursive_solve(current_words + [word], new_remaining, depth + 1)
 
@@ -214,21 +246,41 @@ def solve_letterboxed(sides: list[str], dict_file: str, max_words: int) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Solve NYT Letter Boxed puzzle')
-    parser.add_argument('--dict', type=str, required=True, help='Path to dictionary file')
-    parser.add_argument('--sides', type=str, nargs=4, help='Four sides of the puzzle, each as a string of 3 letters')
-    parser.add_argument('--max-words', type=int, default=2, help='Maximum number of words in solution')
-    
+    parser = argparse.ArgumentParser(description="Solve NYT Letter Boxed puzzle")
+    parser.add_argument("--dict", type=str, help="Path to dictionary file")
+    parser.add_argument(
+        "--sides",
+        type=str,
+        nargs=4,
+        help="Four sides of the puzzle, each as a string of 3 letters",
+    )
+    parser.add_argument(
+        "--max-words", type=int, default=2, help="Maximum number of words in solution"
+    )
+
     args = parser.parse_args()
+
+    if args.sides and not args.dict:
+        print("WARNING: --sides provided, but not --dict. Using today's NYT dictionary, which may not match sides provided.")
+
     if not args.sides:
-        args.sides = get_sides()
+        args.sides = get_nyt_sides()
     args.sides = [side.lower().strip() for side in args.sides]
+
+    word_list = None
+    if args.dict:
+        word_list = dict_file_to_word_list(args.dict)
+        valid_words, words_by_start = prepare_valid_words(word_list, args.sides)
+    else:
+        word_list = get_nyt_word_list()
+        valid_words, words_by_start = prepare_valid_words(word_list, args.sides, True)
 
     # Validate sides input
     if not all(len(side) == 3 for side in args.sides):
         parser.error("Each side must contain exactly 3 letters")
 
-    solve_letterboxed(args.sides, args.dict, args.max_words)
+    solve_letterboxed(args.sides, valid_words, words_by_start, args.max_words)
+
 
 if __name__ == "__main__":
     main()
