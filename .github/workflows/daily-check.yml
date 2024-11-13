@@ -1,0 +1,37 @@
+name: Daily Letter Boxed Check
+on:
+  schedule:
+    - cron: '0 7 * * *'  # Run daily at 7:00 UTC
+  workflow_dispatch:  # Allow manual triggers
+
+jobs:
+  check-puzzle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+          
+      - name: Run puzzle solver
+        run: |
+          python3 ltrbxd.py --daily-check > output.txt
+          
+      - name: Append result to log
+        run: |
+          tail -n 1 output.txt >> daily_log.md
+          
+      - name: Commit and push if changed
+        run: |
+          git config --local user.email "jsmatfess@users.noreply.github.com"
+          git config --local user.name "jsmatfess"
+          git add daily_log.md
+          git commit -m "Add daily puzzle solution" || exit 0
+          git push

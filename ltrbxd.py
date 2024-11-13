@@ -1,31 +1,37 @@
 import argparse
 import re
 import requests
+from datetime import datetime
 
 
-def get_nyt_sides() -> list[str]:
+def get_nyt_response_text() -> str:
     url = "https://www.nytimes.com/puzzles/letter-boxed"
     response = requests.get(url)
+    return response.text
+
+
+def get_nyt_solution(text: str) -> str:
+    return set(re.findall(r'"ourSolution":\[(["A-Z,]+)', text)[0].replace('"', "").split(","))
+
+
+def get_nyt_sides(text: str) -> list[str]:
     return list(
         re.findall(
             r'"sides":\["([A-Z]{3})","([A-Z]{3})","([A-Z]{3})","([A-Z]{3})"\]',
-            response.text,
+            text,
         )[0]
     )
 
 
 def dict_file_to_word_list(dict_file: str) -> list[str]:
     with open(dict_file, "r") as f:
-        return f.read().lower().split()
+        return f.read().upper().split()
 
 
-def get_nyt_word_list() -> list[str]:
-    url = "https://www.nytimes.com/puzzles/letter-boxed"
-    response = requests.get(url)
+def get_nyt_word_list(text: str) -> list[str]:
     return (
-        re.findall(r'"dictionary":\[(["A-Z,]+)', response.text)[0]
+        re.findall(r'"dictionary":\[(["A-Z,]+)', text)[0]
         .replace('"', "")
-        .lower()
         .split(",")
     )
 
@@ -160,7 +166,7 @@ def solve_letterboxed(
     valid_words: list[str],
     words_by_start: dict[str, list[str]],
     max_words: int,
-) -> None:
+) -> set[str]:
     """Find optimal solutions for NYT Letterboxed puzzle.
 
     Uses a recursive depth-first search to find solutions that:
@@ -176,12 +182,16 @@ def solve_letterboxed(
         valid_words (list[str]): List of valid words that can be used in the puzzle
         words_by_start (dict[str, list[str]]): Dictionary mapping starting letters to lists of valid words
         max_words (int, optional): Maximum number of words allowed in solution. Defaults to 2.
+
+    Returns:
+        set[str]: The last solution found, as a set of words
     """
     letter_set = set("".join(sides))
 
     target_length = 12
     best_length = float("inf")
     solution_found = False
+    last_solution = None
 
     def recursive_solve(
         current_words: list[str], remaining_letters: set[str], depth: int = 0
@@ -193,7 +203,7 @@ def solve_letterboxed(
             remaining_letters: Set of letters that still need to be used
             depth: Current recursion depth (number of words used so far)
         """
-        nonlocal solution_found, best_length
+        nonlocal solution_found, best_length, last_solution
 
         # Stop if we found optimal solution or exceeded max words
         if solution_found or depth >= max_words:
@@ -228,6 +238,7 @@ def solve_letterboxed(
                 # If this is a better solution than previous best
                 if solution_length < best_length:
                     best_length = solution_length
+                    last_solution = set(solution_words)
                     solution = (
                         f"{' -> '.join(solution_words)} ({solution_length} letters)"
                     )
@@ -243,6 +254,39 @@ def solve_letterboxed(
 
     # Start recursive search with empty solution
     recursive_solve([], letter_set)
+    return last_solution
+
+
+def daily_check(sides: list[str], valid_words: list[str], words_by_start: dict[str, list[str]], nyt_solution: set[str]):
+    one_word = solve_letterboxed(sides, valid_words, words_by_start, 1)
+    one_word_match = False
+    found_one_word = "❌"
+    if one_word:
+        found_one_word = "✅"
+        if one_word == nyt_solution:
+            one_word_match = True
+
+    two_word = solve_letterboxed(sides, valid_words, words_by_start, 2)
+    two_word_match = False
+    found_two_word = "❌"
+    if two_word:
+        found_two_word = "✅"
+        if two_word == nyt_solution:
+            two_word_match = True
+
+    nyt_match = "❌"
+    if one_word_match or two_word_match:
+        nyt_match = "✅"
+    
+    five_word = solve_letterboxed(sides, valid_words, words_by_start, 5)
+    twelve_letter_solution = "❌"
+    if five_word:
+        five_word_length = calculate_solution_length(five_word)
+        if five_word_length == 12:
+            twelve_letter_solution = "✅"
+    
+    print(f"{datetime.now().strftime('%Y-%m-%d')}|{found_one_word}|{found_two_word}|{twelve_letter_solution}|{nyt_match}")
+
 
 
 def main():
@@ -257,29 +301,39 @@ def main():
     parser.add_argument(
         "--max-words", type=int, default=2, help="Maximum number of words in solution"
     )
-
+    parser.add_argument(
+        "--daily-check",
+        action="store_true",
+    )
     args = parser.parse_args()
 
     if args.sides and not args.dict:
         print("WARNING: --sides provided, but not --dict. Using today's NYT dictionary, which may not match sides provided.")
 
+    if not args.sides or not args.dict:
+        nyt_text = get_nyt_response_text()
+
     if not args.sides:
-        args.sides = get_nyt_sides()
-    args.sides = [side.lower().strip() for side in args.sides]
+        args.sides = get_nyt_sides(nyt_text)
+    args.sides = [side.upper().strip() for side in args.sides]
 
     word_list = None
     if args.dict:
         word_list = dict_file_to_word_list(args.dict)
         valid_words, words_by_start = prepare_valid_words(word_list, args.sides)
     else:
-        word_list = get_nyt_word_list()
+        word_list = get_nyt_word_list(nyt_text)
         valid_words, words_by_start = prepare_valid_words(word_list, args.sides, True)
 
     # Validate sides input
     if not all(len(side) == 3 for side in args.sides):
         parser.error("Each side must contain exactly 3 letters")
 
-    solve_letterboxed(args.sides, valid_words, words_by_start, args.max_words)
+    if args.daily_check:
+        nyt_solution = get_nyt_solution(nyt_text)
+        daily_check(args.sides, valid_words, words_by_start, nyt_solution)
+    else:
+        solve_letterboxed(args.sides, valid_words, words_by_start, args.max_words)
 
 
 if __name__ == "__main__":
