@@ -29,6 +29,7 @@ jobs:
       - name: Append result to log
         run: |
           tail -n 1 output.txt >> daily_log.md
+          rm output.txt
           
       - name: Commit and push if changed
         run: |
